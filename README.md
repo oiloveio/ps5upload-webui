@@ -11,10 +11,9 @@
 特别感谢：
 
 - PhantomPtr / `phantomptr/ps5upload`：PS5Upload 上游项目、engine 和 WebUI。
-- Gezine / `Gezine/Y2JB`：PS5 YouTube app userland code execution 相关项目。
 - PS5 homebrew 和研究社区。
 
-说明：本仓库不是 `Gezine/Y2JB` 的 GitHub fork，也不是上述项目的官方发布。GitHub 页面上的 `forked from ...` 只应由真实 fork 关系产生；本项目用 `NOTICE.md` 和 README 明确致谢与来源。
+说明：本仓库是 `phantomptr/ps5upload` 的下游 fnOS 打包项目，不是上游官方发布。GitHub 页面上的 `forked from ...` 只应由真实 fork 关系产生；本项目用 `NOTICE.md`、`UPSTREAM.lock` 和 `docs/UPSTREAM_STRATEGY.md` 明确上游来源与跟进策略。
 
 ## 版本号方案
 
@@ -142,6 +141,5 @@ engine API 无内置鉴权，不要把 `19113` 端口暴露到公网。局域网
 ## 参考链接
 
 - 上游项目：https://github.com/phantomptr/ps5upload
-- 相关项目：https://github.com/Gezine/Y2JB
 - fnOS 开发文档：https://developer.fnnas.com/docs/guide/
 - 本项目致谢与来源说明：`NOTICE.md`
