@@ -1,0 +1,1 @@
+import{r as e}from"./rolldown-runtime-QTnfLwEv.js";import{An as t}from"./vendor-react-CUJIwpGI.js";import{U as n}from"./roster-Bos5kK_5.js";var r=e(t());function i(){let e=(0,r.useCallback)(()=>{let e=n.getState().host;return{host:e,isStale:()=>n.getState().host!==e}},[]);return(0,r.useMemo)(()=>({capture:e}),[e])}export{i as t};

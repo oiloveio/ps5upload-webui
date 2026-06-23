@@ -1,0 +1,1 @@
+async function e(){return!1}async function t(){return`denied`}function n(e){var t;console.log(`[notification]`,e.title,(t=e.body)==null?``:t)}export{e as isPermissionGranted,t as requestPermission,n as sendNotification};

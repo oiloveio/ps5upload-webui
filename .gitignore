@@ -1,0 +1,8 @@
+dist/
+tools/fnpack
+package/app/bin/ps5upload-engine
+__pycache__/
+*.pyc
+*.fpk
+*.log
+.DS_Store

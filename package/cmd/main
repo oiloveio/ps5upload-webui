@@ -1,0 +1,169 @@
+#!/bin/bash
+set -u
+
+APP_NAME="${TRIM_APPNAME:-ps5upload-webui}"
+APP_DIR="${TRIM_APPDEST:-$(cd "$(dirname "$0")/.." && pwd)}"
+APP_DATA_DIR="${TRIM_PKGVAR:-/tmp/${APP_NAME}}"
+BIN="${APP_DIR}/bin/ps5upload-engine"
+RUNNER="${APP_DIR}/bin/ps5upload-engine-runner"
+SERVICE_PORT="${TRIM_SERVICE_PORT:-19113}"
+LOG_FILE="${APP_DATA_DIR}/logs/${APP_NAME}.log"
+PID_FILE="${APP_DATA_DIR}/${APP_NAME}.pid"
+
+log_msg() {
+    mkdir -p "$(dirname "${LOG_FILE}")" 2>/dev/null || true
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $*" >> "${LOG_FILE}"
+}
+
+read_pid() {
+    [ -r "${PID_FILE}" ] || return 1
+    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
+    [ -n "${pid}" ] || return 1
+    echo "${pid}"
+}
+
+is_running() {
+    pid="$(read_pid)" || return 1
+    kill -0 "${pid}" >/dev/null 2>&1
+}
+
+process_group_running() {
+    pid="${1:-}"
+    [ -n "${pid}" ] || return 1
+    kill -0 -- "-${pid}" >/dev/null 2>&1
+}
+
+kill_process_group() {
+    pid="${1:-}"
+    [ -n "${pid}" ] || return 0
+
+    log_msg "stopping process group pgid=${pid}"
+    kill -TERM -- "-${pid}" >/dev/null 2>&1 || kill -TERM "${pid}" >/dev/null 2>&1 || true
+    sleep 2
+    if kill -0 "${pid}" >/dev/null 2>&1 || process_group_running "${pid}"; then
+        log_msg "force killing process group/pid=${pid}"
+        kill -KILL -- "-${pid}" >/dev/null 2>&1 || kill -KILL "${pid}" >/dev/null 2>&1 || true
+    fi
+    sleep 1
+}
+
+cleanup_stale_companion() {
+    # Precise cleanup for old orphaned python companion processes from versions
+    # that only killed the runner shell. Match both port and data dir.
+    ps -eo pid=,args= 2>/dev/null | while read -r proc_pid proc_args; do
+        [ -n "${proc_pid:-}" ] || continue
+        [ "${proc_pid}" = "$$" ] && continue
+        printf '%s\n' "${proc_args}" | grep -F "ps5upload-companion" >/dev/null 2>&1 || continue
+        printf '%s\n' "${proc_args}" | grep -F -- "--port ${SERVICE_PORT}" >/dev/null 2>&1 || continue
+        printf '%s\n' "${proc_args}" | grep -F -- "--data-dir ${APP_DATA_DIR}" >/dev/null 2>&1 || continue
+        log_msg "terminating stale companion pid=${proc_pid}"
+        kill -TERM "${proc_pid}" >/dev/null 2>&1 || true
+    done
+    sleep 1
+    ps -eo pid=,args= 2>/dev/null | while read -r proc_pid proc_args; do
+        [ -n "${proc_pid:-}" ] || continue
+        [ "${proc_pid}" = "$$" ] && continue
+        printf '%s\n' "${proc_args}" | grep -F "ps5upload-companion" >/dev/null 2>&1 || continue
+        printf '%s\n' "${proc_args}" | grep -F -- "--port ${SERVICE_PORT}" >/dev/null 2>&1 || continue
+        printf '%s\n' "${proc_args}" | grep -F -- "--data-dir ${APP_DATA_DIR}" >/dev/null 2>&1 || continue
+        log_msg "force killing stale companion pid=${proc_pid}"
+        kill -KILL "${proc_pid}" >/dev/null 2>&1 || true
+    done
+}
+
+cleanup_port_owner() {
+    if command -v fuser >/dev/null 2>&1; then
+        log_msg "checking tcp/${SERVICE_PORT} stale owners"
+        fuser -k -TERM "${SERVICE_PORT}/tcp" >/dev/null 2>&1 || true
+        sleep 1
+        fuser -k -KILL "${SERVICE_PORT}/tcp" >/dev/null 2>&1 || true
+    fi
+}
+
+start_service() {
+    mkdir -p "${APP_DATA_DIR}/config" "${APP_DATA_DIR}/data" "${APP_DATA_DIR}/logs"
+
+    if is_running; then
+        log_msg "already running pid=$(cat "${PID_FILE}")"
+        return 0
+    fi
+
+    if [ ! -x "${BIN}" ]; then
+        log_msg "missing executable: ${BIN}"
+        echo "missing executable: ${BIN}" >&2
+        return 1
+    fi
+
+    if [ ! -x "${RUNNER}" ]; then
+        log_msg "missing runner: ${RUNNER}"
+        echo "missing runner: ${RUNNER}" >&2
+        return 1
+    fi
+
+    cleanup_stale_companion
+
+    log_msg "starting ${APP_NAME}"
+    if command -v setsid >/dev/null 2>&1; then
+        setsid "${RUNNER}" "${APP_DATA_DIR}" >> "${LOG_FILE}" 2>&1 &
+    else
+        log_msg "setsid not found; starting without dedicated process group"
+        "${RUNNER}" "${APP_DATA_DIR}" >> "${LOG_FILE}" 2>&1 &
+    fi
+    echo "$!" > "${PID_FILE}"
+
+    sleep 1
+    if is_running; then
+        log_msg "started pid=$(cat "${PID_FILE}")"
+        return 0
+    fi
+
+    log_msg "failed to start"
+    rm -f "${PID_FILE}"
+    cleanup_stale_companion
+    cleanup_port_owner
+    return 1
+}
+
+stop_service() {
+    if ! is_running; then
+        rm -f "${PID_FILE}"
+        cleanup_stale_companion
+        log_msg "not running"
+        return 0
+    fi
+
+    pid="$(cat "${PID_FILE}")"
+    kill_process_group "${pid}"
+    cleanup_stale_companion
+    cleanup_port_owner
+    rm -f "${PID_FILE}"
+    return 0
+}
+
+case "${1:-}" in
+    start)
+        start_service
+        exit $?
+        ;;
+    stop)
+        stop_service
+        exit $?
+        ;;
+    status)
+        if is_running; then
+            exit 0
+        fi
+        exit 3
+        ;;
+    log)
+        if [ -f "${LOG_FILE}" ]; then
+            tail -n "${2:-100}" "${LOG_FILE}"
+        else
+            echo "log file does not exist: ${LOG_FILE}" >&2
+            exit 1
+        fi
+        ;;
+    *)
+        exit 1
+        ;;
+esac

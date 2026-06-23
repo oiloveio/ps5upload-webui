@@ -1,0 +1,17 @@
+{
+  "port-config": {
+    "protocol-file": "ps5upload-webui.sc"
+  },
+  "data-share": {
+    "shares": [
+      {
+        "name": "ps5upload",
+        "permission": {
+          "rw": [
+            "ps5upload"
+          ]
+        }
+      }
+    ]
+  }
+}

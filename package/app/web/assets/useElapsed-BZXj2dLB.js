@@ -1,0 +1,1 @@
+import{r as e}from"./rolldown-runtime-QTnfLwEv.js";import{An as t}from"./vendor-react-CUJIwpGI.js";var n=e(t());function r(e,t=500){let[r,i]=(0,n.useState)(0);return(0,n.useEffect)(()=>{if(!e){i(0);return}let n=Date.now();i(0);let r=setInterval(()=>{i(Date.now()-n)},t);return()=>clearInterval(r)},[e,t]),r}export{r as t};

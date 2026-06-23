@@ -1,0 +1,17 @@
+{
+  ".url": {
+    "ps5upload-webui.Application": {
+      "title": "PS5Upload WebUI",
+      "desc": "PS5 局域网传输 Web UI",
+      "icon": "images/icon_{0}.png",
+      "type": "url",
+      "protocol": "http",
+      "port": "19113",
+      "url": "/",
+      "allUsers": false,
+      "control": {
+        "accessPerm": "readonly"
+      }
+    }
+  }
+}

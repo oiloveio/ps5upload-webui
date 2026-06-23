@@ -1,0 +1,1 @@
+import{r as e}from"./tauri-core-B6IiDgmL.js";async function t(t,n,r){await e(`save_text_file`,{path:t,contents:n,destFilename:r})}async function n(t){return e(`read_text_file`,{path:t})}export{n as readTextFileFromPath,t as writeTextFileToPath};

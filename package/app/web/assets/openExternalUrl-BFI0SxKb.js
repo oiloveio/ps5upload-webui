@@ -1,0 +1,1 @@
+import{n as e}from"./rolldown-runtime-QTnfLwEv.js";import{i as t}from"./logs-BhzIGnyz.js";async function n(e){window.open(e,`_blank`)}var r=e({openExternalUrl:()=>i});async function i(e){try{return await n(e),!0}catch(n){return t.warn(`ui`,`failed to open external url ${e}: ${n instanceof Error?n.message:String(n)}`),!1}}export{r as n,i as t};

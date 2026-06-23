@@ -1,0 +1,1 @@
+import{Z as e}from"./roster-Bos5kK_5.js";import{V as t,a as n}from"./index-BWSMj5mt.js";import{n as r}from"./tauri-dialog-C3hWtIqE.js";async function i(i){return n({mode:i.mode,title:i.title})}async function a(i={}){let e=await n({mode:`file`,title:i.title});return typeof e==`string`?[e]:[]}export{a as n,i as t};

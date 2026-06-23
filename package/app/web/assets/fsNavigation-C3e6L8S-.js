@@ -1,0 +1,1 @@
+import{r as e}from"./vendor-react-CUJIwpGI.js";var t=e((e,t)=>({requestedPath:null,requestPath:t=>e({requestedPath:t}),consume:()=>{let n=t().requestedPath;return n!=null&&e({requestedPath:null}),n}}));function n(e,n){t.getState().requestPath(n),e(`/file-system`)}export{t as n,n as t};

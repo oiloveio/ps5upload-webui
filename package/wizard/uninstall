@@ -1,0 +1,27 @@
+[
+  {
+    "stepTitle": "卸载 PS5Upload WebUI",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "卸载应用不会影响 PS5 主机上的内容。请选择是否同时删除本应用在 NAS 上保存的数据。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_delete_data",
+        "label": "数据处理方式",
+        "initValue": "false",
+        "options": [
+          {
+            "label": "保留应用数据",
+            "value": "false"
+          },
+          {
+            "label": "删除应用数据",
+            "value": "true"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,588 @@
+#!/usr/bin/env python3
+"""
+ps5upload-companion — Web UI + NAS filesystem API + engine reverse proxy.
+
+Listens on :19113 (public port, set by fnOS via TRIM_SERVICE_PORT).
+Routes:
+  /                        → dist/index.html  (SPA fallback)
+  /assets/*  /logo*        → static files from web/
+  /api/nas/roots           → authorized NAS storage roots
+  /api/nas/list            → directory listing
+  /api/nas/path-kind       → file / dir / not_found
+  /api/nas/inspect-folder  → game folder metadata (param.json / param.sfo)
+  /api/nas/file            → serve any NAS file (icons, screenshots)
+  /api/nas/write-text      → write text files inside authorized NAS roots
+  /api/client-log          → append client diagnostic log lines to logs/ps5upload.log
+  /api/client-log/crash    → append a crash dump to logs/crash.log
+  /api/client-log/path     → report the client log file path (for the UI)
+  everything else          → reverse-proxied to engine on :19114
+"""
+
+import argparse
+import json
+import mimetypes
+import os
+import re
+import stat
+import struct
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+from urllib import request as urllib_request
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlparse
+
+
+# ── NAS root detection ─────────────────────────────────────────────────────────
+
+def _json_share_paths(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _json_share_paths(item)
+    elif isinstance(value, dict):
+        for key in ("path", "real_path", "realPath", "mount_path", "mountPath"):
+            item = value.get(key)
+            if isinstance(item, str):
+                yield item
+        for key in ("shares", "paths", "data_share_paths", "dataSharePaths"):
+            if key in value:
+                yield from _json_share_paths(value[key])
+
+
+def _parse_share_paths(raw: str):
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    try:
+        decoded = json.loads(raw)
+        paths = [p.strip() for p in _json_share_paths(decoded) if isinstance(p, str) and p.strip()]
+        if paths:
+            return paths
+    except Exception:
+        pass
+    return [p.strip() for p in re.split(r"[\n,;:]+", raw) if p.strip()]
+
+
+def _normalize_existing_dirs(paths):
+    roots = []
+    seen = set()
+    for path in paths:
+        p = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+        if p in seen or not os.path.isdir(p):
+            continue
+        seen.add(p)
+        roots.append(p)
+    return roots
+
+
+def _find_nas_roots():
+    shared = os.environ.get("TRIM_DATA_SHARE_PATHS", "").strip()
+    if shared:
+        return _normalize_existing_dirs(_parse_share_paths(shared))
+
+    roots = []
+    try:
+        for name in sorted(os.listdir("/")):
+            if name.startswith("vol") and name[3:].isdigit():
+                p = "/" + name
+                if os.path.isdir(p):
+                    roots.append(p)
+    except OSError:
+        pass
+    if os.path.isdir("/volumes"):
+        try:
+            for sub in sorted(os.listdir("/volumes")):
+                p = "/volumes/" + sub
+                if os.path.isdir(p):
+                    roots.append(p)
+        except OSError:
+            pass
+    if not roots:
+        roots = [os.path.expanduser("~")]
+    return _normalize_existing_dirs(roots)
+
+
+def _is_under_root(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
+def _is_authorized_nas_path(path: str) -> bool:
+    real_path = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    return any(_is_under_root(real_path, root) for root in _find_nas_roots())
+
+
+def _resolve_authorized_nas_path(path: str) -> str:
+    real_path = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    if not _is_authorized_nas_path(real_path):
+        raise PermissionError(f"path outside authorized data-share roots: {path}")
+    return real_path
+
+
+# ── param.sfo parser (binary PS4/PS5 metadata format) ─────────────────────────
+
+def _parse_param_sfo(data: bytes) -> dict:
+    """Parse a PS4/PS5 PARAM.SFO binary file, return dict of key→value."""
+    if len(data) < 20 or data[:4] != b"\x00PSF":
+        return {}
+    try:
+        _ver, _unk, key_table_off, data_table_off, entries = struct.unpack_from("<IIIII", data, 4)
+        result = {}
+        for i in range(entries):
+            off = 20 + i * 16
+            key_off, fmt, param_len, param_max_len, data_off = struct.unpack_from("<HHIII", data, off)
+            key = data[key_table_off + key_off:].split(b"\x00")[0].decode("utf-8", errors="ignore")
+            val_bytes = data[data_table_off + data_off: data_table_off + data_off + param_len]
+            if fmt == 0x0404:  # UTF-8 string
+                val = val_bytes.rstrip(b"\x00").decode("utf-8", errors="ignore")
+            elif fmt == 0x0204:  # uint32
+                val = struct.unpack_from("<I", val_bytes)[0] if len(val_bytes) >= 4 else 0
+            else:
+                continue
+            result[key] = val
+        return result
+    except Exception:
+        return {}
+
+
+# ── folder inspection ──────────────────────────────────────────────────────────
+
+def _inspect_folder(path: str) -> dict:
+    """Walk path, extract PS5 game metadata, return FolderInspectResult."""
+    total_size = 0
+    file_count = 0
+    skipped = []
+    param_data = None
+    param_source = "none"
+    icon0_path = None
+    wrapped_hint = None
+
+    # Check for wrapped game: single child dir that is the actual game root
+    try:
+        children = [c for c in os.listdir(path) if os.path.isdir(os.path.join(path, c))]
+        if len(children) == 1:
+            child_path = os.path.join(path, children[0])
+            if os.path.isdir(os.path.join(child_path, "sce_sys")):
+                wrapped_hint = {"path": child_path, "title": None, "title_id": None}
+    except OSError:
+        pass
+
+    for root, dirs, files in os.walk(path):
+        # Sort for determinism; skip hidden dirs
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        for fname in sorted(files):
+            fpath = os.path.join(root, fname)
+            try:
+                fsize = os.path.getsize(fpath)
+                total_size += fsize
+                file_count += 1
+            except OSError:
+                skipped.append(fpath)
+                continue
+
+            rel = os.path.relpath(fpath, path)
+            # param.json takes priority over param.sfo
+            if rel in ("sce_sys/param.json", "sce_sys\\param.json") and param_source != "param.json":
+                try:
+                    with open(fpath, "rb") as f:
+                        param_data = json.load(f)
+                    param_source = "param.json"
+                except Exception:
+                    pass
+            elif rel in ("sce_sys/param.sfo", "sce_sys\\param.sfo") and param_source == "none":
+                try:
+                    with open(fpath, "rb") as f:
+                        param_data = _parse_param_sfo(f.read())
+                    param_source = "param.sfo"
+                except Exception:
+                    pass
+            if rel in ("sce_sys/icon0.png", "sce_sys\\icon0.png"):
+                icon0_path = fpath
+
+    # Extract fields from metadata
+    title = None
+    title_id = None
+    content_id = None
+    content_version = None
+    app_cat = None
+
+    if param_data and param_source == "param.json":
+        content_id = param_data.get("contentId")
+        title_id = param_data.get("titleId")
+        content_version = param_data.get("contentVersion")
+        app_cat = param_data.get("applicationCategoryType")
+        loc = param_data.get("localizedParameters", {})
+        default_lang = loc.get("defaultLanguage", "en-US")
+        lang_data = loc.get(default_lang, loc.get("en-US", {}))
+        title = lang_data.get("titleName")
+        # Derive title_id from content_id if missing
+        if not title_id and content_id and len(content_id) > 9:
+            title_id = content_id[7:16] if content_id[6] == "-" else None
+        # Update wrapped hint with metadata
+        if wrapped_hint:
+            wrapped_hint["title"] = title
+            wrapped_hint["title_id"] = title_id
+    elif param_data and param_source == "param.sfo":
+        title = param_data.get("TITLE") or param_data.get("TITLE_00")
+        title_id = param_data.get("TITLE_ID")
+        content_id = param_data.get("CONTENT_ID")
+        content_version = param_data.get("APP_VER")
+        app_cat = param_data.get("CATEGORY")
+        if wrapped_hint:
+            wrapped_hint["title"] = title
+            wrapped_hint["title_id"] = title_id
+
+    result = {
+        "path": path,
+        "title": title,
+        "title_id": title_id,
+        "content_id": content_id,
+        "content_version": content_version,
+        "application_category_type": app_cat,
+        "icon0_path": icon0_path,
+        "total_size": total_size,
+        "file_count": file_count,
+        "skipped_paths": skipped[:20],
+        "meta_source": param_source,
+    }
+    return {"ok": True, "result": result, "wrapped_hint": wrapped_hint}
+
+
+# ── HTTP handler ──────────────────────────────────────────────────────────────
+
+class Handler(BaseHTTPRequestHandler):
+    web_dir: str = ""
+    engine_url: str = ""
+    data_dir: str = ""
+
+    @classmethod
+    def _log_dir(cls) -> str:
+        d = os.path.join(cls.data_dir or "/tmp/ps5upload-webui", "logs")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    @classmethod
+    def client_log_path(cls) -> str:
+        return os.path.join(cls._log_dir(), "ps5upload.log")
+
+    @classmethod
+    def crash_log_path(cls) -> str:
+        return os.path.join(cls._log_dir(), "crash.log")
+
+    def log_message(self, fmt, *args):
+        pass  # suppress per-request noise; errors still go to stderr
+
+    # ── response helpers ──────────────────────────────────────────────────────
+
+    def _send_json(self, code: int, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_err(self, code: int, msg: str):
+        self._send_json(code, {"error": msg})
+
+    # ── routing ───────────────────────────────────────────────────────────────
+
+    def _route(self, head_only=False):
+        parsed = urlparse(self.path)
+        p = parsed.path
+        qs = parse_qs(parsed.query)
+
+        if p == "/api/nas/roots":
+            self._send_json(200, {"roots": [{"path": r} for r in _find_nas_roots()]})
+
+        elif p == "/api/nas/list":
+            path = qs.get("path", [None])[0]
+            if not path:
+                return self._send_err(400, "missing path")
+            self._nas_list(path)
+
+        elif p == "/api/nas/path-kind":
+            path = qs.get("path", [None])[0]
+            if not path:
+                return self._send_err(400, "missing path")
+            try:
+                path = _resolve_authorized_nas_path(path)
+            except PermissionError as e:
+                return self._send_err(403, str(e))
+            if not os.path.exists(path):
+                kind = "missing"
+            elif os.path.isdir(path):
+                kind = "folder"
+            else:
+                kind = "file"
+            self._send_json(200, {"kind": kind})
+
+        elif p == "/api/nas/inspect-folder":
+            path = qs.get("path", [None])[0]
+            if not path:
+                return self._send_err(400, "missing path")
+            try:
+                path = _resolve_authorized_nas_path(path)
+                if not os.path.isdir(path):
+                    self._send_err(404, f"not a directory: {path}")
+                    return
+                result = _inspect_folder(path)
+                self._send_json(200, result)
+            except PermissionError as e:
+                self._send_err(403, str(e))
+            except Exception as e:
+                self._send_err(500, str(e))
+
+        elif p == "/api/nas/file":
+            path = qs.get("path", [None])[0]
+            if not path:
+                return self._send_err(400, "missing path")
+            self._serve_file(path, head_only=head_only, restrict_nas=True)
+
+        elif p == "/api/client-log/path":
+            self._send_json(200, {"path": self.client_log_path()})
+
+        elif p.startswith("/api/") or p == "/pkg-host":
+            self._proxy()
+
+        else:
+            self._serve_static(p, head_only=head_only)
+
+    def do_GET(self):
+        self._route()
+
+    def do_HEAD(self):
+        self._route(head_only=True)
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        p = parsed.path
+        if p == "/api/client-log":
+            self._client_log_append()
+        elif p == "/api/client-log/crash":
+            self._client_log_crash()
+        elif p == "/api/nas/write-text":
+            self._nas_write_text()
+        elif p.startswith("/api/") or p == "/pkg-host":
+            self._proxy()
+        else:
+            self._send_err(404, "not found")
+
+    # ── client diagnostic log persistence ──────────────────────────────────────
+
+    def _read_json_body(self):
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if not length:
+            return {}
+        try:
+            return json.loads(self.rfile.read(length).decode("utf-8", errors="replace"))
+        except Exception:
+            return {}
+
+    def _client_log_append(self):
+        """Append batched client log lines to logs/ps5upload.log (body: {lines:[...]})."""
+        body = self._read_json_body()
+        lines = body.get("lines", []) if isinstance(body, dict) else []
+        try:
+            with open(self.client_log_path(), "a", encoding="utf-8") as f:
+                for line in lines:
+                    f.write(line if isinstance(line, str) else json.dumps(line, ensure_ascii=False))
+                    f.write("\n")
+            self._send_json(200, {"ok": True, "written": len(lines)})
+        except Exception as e:
+            self._send_err(500, str(e))
+
+    def _client_log_crash(self):
+        """Append a crash dump to logs/crash.log (body: {contents:"..."})."""
+        body = self._read_json_body()
+        contents = body.get("contents", "") if isinstance(body, dict) else ""
+        try:
+            with open(self.crash_log_path(), "a", encoding="utf-8") as f:
+                f.write("\n===== crash report =====\n")
+                f.write(contents if isinstance(contents, str) else json.dumps(contents, ensure_ascii=False))
+                f.write("\n")
+            self._send_json(200, {"ok": True})
+        except Exception as e:
+            self._send_err(500, str(e))
+
+    def _nas_write_text(self):
+        """Write a UTF-8 text file under an authorized NAS root."""
+        body = self._read_json_body()
+        if not isinstance(body, dict):
+            return self._send_err(400, "invalid json body")
+
+        raw_path = body.get("path")
+        contents = body.get("contents", "")
+        dest_filename = body.get("destFilename", "download.txt")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return self._send_err(400, "missing path")
+        if not isinstance(contents, str):
+            contents = json.dumps(contents, ensure_ascii=False)
+        if not isinstance(dest_filename, str) or not dest_filename.strip():
+            dest_filename = "download.txt"
+
+        safe_name = os.path.basename(dest_filename.replace("\\", "/")) or "download.txt"
+        try:
+            path = _resolve_authorized_nas_path(raw_path)
+            if os.path.isdir(path):
+                path = os.path.join(path, safe_name)
+            parent = os.path.dirname(path) or "."
+            parent = _resolve_authorized_nas_path(parent)
+            if not os.path.isdir(parent):
+                return self._send_err(404, f"parent directory not found: {parent}")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(contents)
+            self._send_json(200, {"ok": True, "path": path, "bytes": len(contents.encode("utf-8"))})
+        except PermissionError as e:
+            self._send_err(403, str(e))
+        except Exception as e:
+            self._send_err(500, str(e))
+
+    def do_PUT(self):
+        self._proxy()
+
+    def do_DELETE(self):
+        self._proxy()
+
+    def do_PATCH(self):
+        self._proxy()
+
+    # ── NAS list ─────────────────────────────────────────────────────────────
+
+    def _nas_list(self, path: str):
+        try:
+            path = _resolve_authorized_nas_path(path)
+            entries = []
+            for name in sorted(os.listdir(path)):
+                full = os.path.join(path, name)
+                try:
+                    if not _is_authorized_nas_path(full):
+                        continue
+                    st = os.stat(full)
+                    is_dir = stat.S_ISDIR(st.st_mode)
+                    entries.append({
+                        "name": name,
+                        "path": full,
+                        "kind": "dir" if is_dir else "file",
+                        "size": None if is_dir else st.st_size,
+                    })
+                except OSError:
+                    pass
+            self._send_json(200, {"entries": entries})
+        except PermissionError as e:
+            self._send_err(403, str(e))
+        except FileNotFoundError as e:
+            self._send_err(404, str(e))
+        except Exception as e:
+            self._send_err(500, str(e))
+
+    # ── static file server ───────────────────────────────────────────────────
+
+    def _serve_static(self, path: str, head_only=False):
+        # Everything except /assets/* and known root files → SPA index.html
+        is_asset = path.startswith("/assets/") or path in ("/logo.png", "/logo-square.png")
+        if is_asset:
+            file_path = os.path.join(self.web_dir, path.lstrip("/"))
+        else:
+            file_path = os.path.join(self.web_dir, "index.html")
+
+        if not os.path.isfile(file_path):
+            file_path = os.path.join(self.web_dir, "index.html")
+
+        self._serve_file(file_path, head_only=head_only)
+
+    def _serve_file(self, file_path: str, head_only=False, restrict_nas=False):
+        try:
+            if restrict_nas:
+                file_path = _resolve_authorized_nas_path(file_path)
+            with open(file_path, "rb") as f:
+                content = f.read()
+            mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            if not head_only:
+                self.wfile.write(content)
+        except FileNotFoundError:
+            self._send_err(404, "file not found")
+        except PermissionError:
+            self._send_err(403, "permission denied")
+
+    # ── engine proxy ─────────────────────────────────────────────────────────
+
+    def _proxy(self):
+        target = f"{self.engine_url}{self.path}"
+        content_length = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(content_length) if content_length else None
+
+        # Forward most headers; strip hop-by-hop
+        skip = {"host", "connection", "transfer-encoding", "keep-alive",
+                "proxy-connection", "upgrade"}
+        headers = {k: v for k, v in self.headers.items() if k.lower() not in skip}
+
+        req = urllib_request.Request(target, data=body, headers=headers,
+                                     method=self.command)
+        try:
+            with urllib_request.urlopen(req, timeout=300) as resp:
+                self.send_response(resp.status)
+                for k, v in resp.headers.items():
+                    if k.lower() in ("content-type", "content-length",
+                                     "cache-control", "etag", "last-modified"):
+                        self.send_header(k, v)
+                self.end_headers()
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except HTTPError as e:
+            err_body = e.read()
+            self.send_response(e.code)
+            ct = e.headers.get("Content-Type", "application/json")
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(err_body)))
+            self.end_headers()
+            self.wfile.write(err_body)
+        except URLError as e:
+            self._send_err(502, f"engine unavailable: {e.reason}")
+        except Exception as e:
+            self._send_err(500, f"proxy error: {e}")
+
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
+def main():
+    ap = argparse.ArgumentParser(description="ps5upload companion server")
+    ap.add_argument("--port", type=int, default=19113)
+    ap.add_argument("--engine-port", type=int, default=19114)
+    ap.add_argument("--web-dir", required=True)
+    ap.add_argument("--data-dir", default="/tmp/ps5upload-webui")
+    args = ap.parse_args()
+
+    if not os.path.isdir(args.web_dir):
+        print(f"[companion] ERROR: web-dir not found: {args.web_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    Handler.web_dir = args.web_dir
+    Handler.engine_url = f"http://127.0.0.1:{args.engine_port}"
+    Handler.data_dir = args.data_dir
+
+    server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
+    print(f"[companion] listening on :{args.port}", flush=True)
+    print(f"[companion]   web  → {args.web_dir}", flush=True)
+    print(f"[companion]   api  → http://127.0.0.1:{args.engine_port}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

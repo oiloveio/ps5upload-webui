@@ -1,0 +1,29 @@
+#!/bin/bash
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ -x "${SCRIPT_DIR}/main" ]; then
+    "${SCRIPT_DIR}/main" stop >/dev/null 2>&1 || true
+fi
+
+safe_remove_app_data() {
+    local target="${TRIM_PKGVAR:-}"
+    [ -n "${target}" ] || return 0
+
+    case "${target}" in
+        /vol*/@appdata/ps5upload-webui|/usr/local/apps/@appdata/ps5upload-webui)
+            rm -rf "${target}"
+            ;;
+        *)
+            echo "Refusing to remove unexpected app data path: ${target}" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
+            return 1
+            ;;
+    esac
+}
+
+if [ "${wizard_delete_data:-false}" = "true" ]; then
+    safe_remove_app_data || exit 1
+fi
+
+exit 0

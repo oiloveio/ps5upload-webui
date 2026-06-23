@@ -1,0 +1,7 @@
+{
+  "defaults": {
+    "run-as": "package"
+  },
+  "username": "ps5upload",
+  "groupname": "ps5upload"
+}

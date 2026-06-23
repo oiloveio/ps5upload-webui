@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+
+APP_DIR="${TRIM_APPDEST:-$(cd "$(dirname "$0")/.." && pwd)}"
+APP_DATA_DIR="${1:-${TRIM_PKGVAR:-/tmp/ps5upload-webui}}"
+CONFIG_FILE="${APP_DATA_DIR}/config/runtime.env"
+
+mkdir -p "${APP_DATA_DIR}/config" "${APP_DATA_DIR}/data" "${APP_DATA_DIR}/logs"
+
+if [ -r "${CONFIG_FILE}" ]; then
+    # shellcheck disable=SC1090
+    . "${CONFIG_FILE}"
+fi
+
+# Companion listens on the public port (shown in fnOS); engine is loopback-only
+COMPANION_PORT="${TRIM_SERVICE_PORT:-19113}"
+ENGINE_PORT=19114
+
+export PS5UPLOAD_ENGINE_PORT="${ENGINE_PORT}"
+export PS5_ADDR="${PS5UPLOAD_PS5_IP:-192.168.137.2}:9113"
+export PS5UPLOAD_ALLOW_IP="${PS5UPLOAD_ALLOWED_IPS:-}"
+
+cd "${APP_DATA_DIR}/data"
+
+# Start engine on internal port; log to file
+"${APP_DIR}/bin/ps5upload-engine" \
+    >> "${APP_DATA_DIR}/logs/engine.log" 2>&1 &
+ENGINE_PID=$!
+
+# Start companion in background too, so this script stays the supervisor and can
+# tear BOTH children down on any stop signal (前台运行会导致信号送给 sh 时 python
+# 收不到、最终被孤儿化而占住端口)。
+python3 "${APP_DIR}/bin/ps5upload-companion" \
+    --port "${COMPANION_PORT}" \
+    --engine-port "${ENGINE_PORT}" \
+    --web-dir "${APP_DIR}/web" \
+    --data-dir "${APP_DATA_DIR}" &
+COMPANION_PID=$!
+
+# 收到停止信号 / 退出时，确保 engine 和 companion 都被结束（先 TERM，宽限后 KILL）
+cleanup() {
+    trap - EXIT INT TERM
+    kill -TERM "${COMPANION_PID}" "${ENGINE_PID}" 2>/dev/null || true
+    sleep 2
+    kill -KILL "${COMPANION_PID}" "${ENGINE_PID}" 2>/dev/null || true
+    wait "${COMPANION_PID}" "${ENGINE_PID}" 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
+
+# POSIX sh 没有 wait -n；用轮询监督两个子进程。任一退出就触发 EXIT trap，
+# 防止只剩 engine 或 companion 半边存活。
+while :; do
+    if ! kill -0 "${ENGINE_PID}" 2>/dev/null; then
+        echo "[runner] engine exited; stopping companion" >&2
+        exit 1
+    fi
+    if ! kill -0 "${COMPANION_PID}" 2>/dev/null; then
+        echo "[runner] companion exited; stopping engine" >&2
+        exit 1
+    fi
+    sleep 1
+done
