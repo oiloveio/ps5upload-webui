@@ -12,6 +12,10 @@ if [ ! -x "${PKG}/app/bin/ps5upload-engine" ]; then
   node "${ROOT}/scripts/fetch-engine-binary.mjs"
 fi
 
+cp "${ROOT}/CHANGELOG.md" "${PKG}/app/CHANGELOG.md"
+cp "${ROOT}/FAQ.md" "${PKG}/app/FAQ.md"
+find "${PKG}/app" -type d -name "__pycache__" -prune -exec rm -rf {} +
+
 # 重放本项目对 web 前端 tauri-shim 的改动（幂等；若上游 shim 形态变更导致锚点失配会在此报错）
 node "${ROOT}/scripts/patch-webui.mjs"
 

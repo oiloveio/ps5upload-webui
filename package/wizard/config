@@ -21,6 +21,14 @@
         "initValue": "",
         "placeholder": "例如 192.168.1.100",
         "helpText": "填入用于打开此应用网页的设备局域网 IP。多台设备用英文逗号分隔。不填会导致打开网页时显示「loopback only」错误。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_nas_roots",
+        "label": "额外 NAS 授权目录（可选）",
+        "initValue": "",
+        "placeholder": "例如 /vol1/游戏,/vol2/PS5",
+        "helpText": "默认会使用 fnOS 传入的 data-share 授权目录。若你已在 fnOS 中给本应用运行用户授权其它共享目录，可在这里填绝对路径，多个路径用英文逗号分隔。"
       }
     ]
   }

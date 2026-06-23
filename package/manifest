@@ -1,5 +1,5 @@
 appname=ps5upload-webui
-version=3.3.22-6
+version=3.3.22-7
 display_name=PS5Upload WebUI
 desc=PS5 局域网传输、安装包安装、挂载和文件管理的 Web UI。内置 ps5upload-engine 二进制，通过伴生服务器（companion）暴露完整 Web 界面，支持 NAS 文件浏览，无需桌面客户端即可使用全部功能。
 platform=x86
@@ -18,4 +18,4 @@ checkport=true
 ctl_stop=true
 disable_authorization_path=false
 
-changelog=3.3.22-6: 包级命名、启动默认值、数据目录 fallback、向导和防火墙资源统一为 ps5upload-webui；明确当前架构为 WebUI + companion + engine；清理 Python 字节码缓存，避免 __pycache__ 进入 app.tgz；补完整 GPLv3 许可证、NOTICE 致谢和正确 distributor_url。3.3.22-5: 建立多 agent 异步迭代 git 归因规则；修复 stop/卸载后 companion 残留占用 19113 的问题；修复所有 WebUI 文件选择入口，统一走 NAS LocalPathPicker，并支持文本导出写入授权目录。3.3.22-4: 修复上传/选择本地 NAS 文件时点击无反应的问题，WebUI 选择器固定走 NAS LocalPathPicker，避免空的 Tauri dialog 分支；NAS 文件接口限制在 fnOS 授权的 data-share 目录内。3.3.22-3: 客户端诊断日志落盘到套件数据目录 logs/ps5upload.log（崩溃转储入 logs/crash.log），与原版路径一致；新增 scripts/patch-webui.mjs 可重放 shim 补丁，便于跟进上游升级。
+changelog=3.3.22-7: 修复 WebUI 无法加载 CHANGELOG.md / FAQ.md；修复 NAS 选择器在授权根点击上一级后访问 /vol1/@appshare 报越权的问题；支持安装/配置向导填写额外 NAS 授权目录。3.3.22-6: 包级命名、启动默认值、数据目录 fallback、向导和防火墙资源统一为 ps5upload-webui；明确当前架构为 WebUI + companion + engine；清理 Python 字节码缓存，避免 __pycache__ 进入 app.tgz；补完整 GPLv3 许可证、NOTICE 致谢和正确 distributor_url。3.3.22-5: 建立多 agent 异步迭代 git 归因规则；修复 stop/卸载后 companion 残留占用 19113 的问题；修复所有 WebUI 文件选择入口，统一走 NAS LocalPathPicker，并支持文本导出写入授权目录。3.3.22-4: 修复上传/选择本地 NAS 文件时点击无反应的问题，WebUI 选择器固定走 NAS LocalPathPicker，避免空的 Tauri dialog 分支；NAS 文件接口限制在 fnOS 授权的 data-share 目录内。3.3.22-3: 客户端诊断日志落盘到套件数据目录 logs/ps5upload.log（崩溃转储入 logs/crash.log），与原版路径一致；新增 scripts/patch-webui.mjs 可重放 shim 补丁，便于跟进上游升级。

@@ -4,12 +4,17 @@ set -u
 APP_DATA_DIR="${TRIM_PKGVAR:-/tmp/ps5upload-webui}"
 CONFIG_DIR="${APP_DATA_DIR}/config"
 
+quote_value() {
+    printf "%s" "$1" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/"
+}
+
 mkdir -p "${CONFIG_DIR}" "${APP_DATA_DIR}/data" "${APP_DATA_DIR}/logs" 2>/dev/null || true
 
 if [ ! -f "${CONFIG_DIR}/runtime.env" ]; then
     {
-        echo "PS5UPLOAD_PS5_IP=${wizard_ps5_ip:-192.168.137.2}"
-        echo "PS5UPLOAD_ALLOWED_IPS=${wizard_allow_ip:-}"
+        printf "PS5UPLOAD_PS5_IP=%s\n" "$(quote_value "${wizard_ps5_ip:-192.168.137.2}")"
+        printf "PS5UPLOAD_ALLOWED_IPS=%s\n" "$(quote_value "${wizard_allow_ip:-}")"
+        printf "PS5UPLOAD_NAS_ROOTS=%s\n" "$(quote_value "${wizard_nas_roots:-}")"
     } > "${CONFIG_DIR}/runtime.env"
 fi
 

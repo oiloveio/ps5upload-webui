@@ -1,6 +1,8 @@
 dist/
 tools/fnpack
 package/app/bin/ps5upload-engine
+package/app/CHANGELOG.md
+package/app/FAQ.md
 __pycache__/
 *.pyc
 *.fpk

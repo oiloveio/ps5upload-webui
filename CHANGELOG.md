@@ -13,6 +13,14 @@
 
 暂无。
 
+## 3.3.22-7 - 2026-06-23
+
+### 修复
+
+- **修复 WebUI 无法加载更新日志/FAQ**：补齐 `changelog_load` / `faq_load` shim 命令，companion 新增 `/api/app/changelog`、`/api/app/faq`，构建时把 `CHANGELOG.md` 和 `FAQ.md` 打入 `app.tgz`。
+- **修复 NAS 选择器授权根上一级越权报错**：LocalPathPicker 在授权根禁用“上一级”；companion 对授权根父目录只返回通往授权根的虚拟子目录，避免访问 `/vol1/@appshare` 时暴露其它目录或报死。
+- **支持额外 NAS 授权目录**：安装/配置向导新增“额外 NAS 授权目录”，保存为 `PS5UPLOAD_NAS_ROOTS`，与 fnOS `TRIM_DATA_SHARE_PATHS` 一起作为 WebUI 可选根目录。
+
 ## 3.3.22-6 - 2026-06-23
 
 ### 修复

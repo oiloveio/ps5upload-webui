@@ -29,6 +29,13 @@ for path in "${required_paths[@]}"; do
   fi
 done
 
+for bundled_doc in CHANGELOG.md FAQ.md; do
+  if [ ! -f "${ROOT}/${bundled_doc}" ]; then
+    echo "missing bundled document source: ${ROOT}/${bundled_doc}" >&2
+    exit 1
+  fi
+done
+
 for key in appname version display_name source service_port desktop_uidir desktop_applaunchname; do
   if ! grep -q "^${key}=" "${PKG}/manifest"; then
     echo "manifest missing key: ${key}" >&2
@@ -155,6 +162,34 @@ fi
 
 if ! grep -Fq 'save_text_file:async(e)=>d(`/api/nas/write-text`,e)' "${shim_file}"; then
   echo "save_text_file must write through companion in WebUI build" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'changelog_load:async()=>g(`/api/app/changelog`)' "${shim_file}"; then
+  echo "changelog_load must read bundled CHANGELOG.md in WebUI build" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'faq_load:async()=>g(`/api/app/faq`)' "${shim_file}"; then
+  echo "faq_load must read bundled FAQ.md in WebUI build" >&2
+  exit 1
+fi
+
+index_count=0
+index_file=""
+for file in "${PKG}"/app/web/assets/index-*.js; do
+  [ -e "${file}" ] || continue
+  index_count=$((index_count + 1))
+  index_file="${file}"
+done
+
+if [ "${index_count}" -ne 1 ]; then
+  echo "expected exactly one app/web/assets/index-*.js, found ${index_count}" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'let y=l&&!s.includes(l)?sa(l):null;' "${index_file}"; then
+  echo "LocalPathPicker must not navigate above an authorized storage root" >&2
   exit 1
 fi
 

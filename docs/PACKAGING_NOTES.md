@@ -43,6 +43,14 @@ fnOS 会提供以下运行时变量：
 ${TRIM_PKGVAR}/config/runtime.env
 ```
 
+WebUI NAS 选择器的根目录来源：
+
+1. fnOS 运行时传入的 `TRIM_DATA_SHARE_PATHS`；
+2. 安装/配置向导保存的 `PS5UPLOAD_NAS_ROOTS`；
+3. 本地开发时若前两者为空，才回退扫描 `/vol*` 或 `/volumes/*`。
+
+`PS5UPLOAD_NAS_ROOTS` 只声明“可显示为选择器根目录”的路径，不提升系统权限。最终能否读取/写入仍由 fnOS/文件系统权限决定。
+
 ## 当前待确认事项
 
 - WebUI 来自上游 Tauri 前端预构建产物，浏览器环境依赖本项目维护的 tauri-shim 补丁；上游升级时必须重跑 `scripts/patch-webui.mjs`。

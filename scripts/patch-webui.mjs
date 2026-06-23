@@ -61,6 +61,27 @@ function fail(msg) {
 // ── 改动清单 ────────────────────────────────────────────────────────────────
 const SHIM_PATCHES = [
   {
+    name: "新增 text helper（CHANGELOG/FAQ 读取 Markdown 文本）",
+    applied: (s) => s.includes("async function g(e){let t=await fetch(`${l()}${e}`);if(!t.ok)throw Error(await t.text());return t.text()}"),
+    anchor:
+      "async function d(e,t){let n=await fetch(`${l()}${e}`,{method:`POST`,headers:{\"Content-Type\":`application/json`},body:JSON.stringify(t)});if(!n.ok)throw Error(await n.text());return n.json()}function f(e){",
+    apply: (s, a) =>
+      s.replace(
+        a,
+        "async function d(e,t){let n=await fetch(`${l()}${e}`,{method:`POST`,headers:{\"Content-Type\":`application/json`},body:JSON.stringify(t)});if(!n.ok)throw Error(await n.text());return n.json()}async function g(e){let t=await fetch(`${l()}${e}`);if(!t.ok)throw Error(await t.text());return t.text()}function f(e){",
+      ),
+  },
+  {
+    name: "changelog_load / faq_load → companion bundled Markdown",
+    applied: (s) => s.includes("changelog_load:async()=>g(`/api/app/changelog`)"),
+    anchor: "engine_logs_tail:async({since:e})=>u(`/api/engine-logs${e==null?``:`?since=${e}`}`),",
+    apply: (s, a) =>
+      s.replace(
+        a,
+        a + "changelog_load:async()=>g(`/api/app/changelog`),faq_load:async()=>g(`/api/app/faq`),",
+      ),
+  },
+  {
     name: "engine_logs_tail → /api/engine-logs（前端命令名与 shim 不一致）",
     applied: (s) => s.includes("engine_logs_tail:"),
     anchor: "engine_logs:async({since:e})=>u(`/api/engine-logs${e==null?``:`?since=${e}`}`),",
@@ -146,6 +167,15 @@ const DIALOG_PATCHES = [
   },
 ];
 
+const INDEX_PATCHES = [
+  {
+    name: "LocalPathPicker 授权根禁用上一级（避免访问 /vol1/@appshare 这类父目录时报错）",
+    applied: (s) => s.includes("let y=l&&!s.includes(l)?sa(l):null;"),
+    anchor: "let y=l?sa(l):null;return(0,M.jsxDEV)",
+    apply: (s, a) => s.replace(a, "let y=l&&!s.includes(l)?sa(l):null;return(0,M.jsxDEV)"),
+  },
+];
+
 function applyPatches(targetPath, patches) {
   let s = readFileSync(targetPath, "utf8");
   const before = s;
@@ -183,3 +213,4 @@ function applyPatches(targetPath, patches) {
 applyPatches(findShim(), SHIM_PATCHES);
 applyPatches(findPickPath(), PICK_PATH_PATCHES);
 applyPatches(findDialog(), DIALOG_PATCHES);
+applyPatches(findIndex(), INDEX_PATCHES);
