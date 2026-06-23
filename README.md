@@ -4,6 +4,18 @@
 
 本仓库把上游 `ps5upload-engine` 和 React WebUI 打包为可在 fnOS 上直接运行的原生应用（不依赖 Docker）。外部访问 `ps5upload-webui` 的 Web 界面，内部由 companion 反代 loopback engine API。
 
+## 上游与致谢
+
+本项目是非官方 fnOS 打包项目，核心能力来自上游 `phantomptr/ps5upload`。本仓库包含 fnOS 打包脚本、companion 服务、NAS 文件接口和 WebUI shim 补丁。
+
+特别感谢：
+
+- PhantomPtr / `phantomptr/ps5upload`：PS5Upload 上游项目、engine 和 WebUI。
+- Gezine / `Gezine/Y2JB`：PS5 YouTube app userland code execution 相关项目。
+- PS5 homebrew 和研究社区。
+
+说明：本仓库不是 `Gezine/Y2JB` 的 GitHub fork，也不是上述项目的官方发布。GitHub 页面上的 `forked from ...` 只应由真实 fork 关系产生；本项目用 `NOTICE.md` 和 README 明确致谢与来源。
+
 ## 版本号方案
 
 版本格式：`上游版本-打包版次`，如 `3.3.22-1`。
@@ -130,4 +142,6 @@ engine API 无内置鉴权，不要把 `19113` 端口暴露到公网。局域网
 ## 参考链接
 
 - 上游项目：https://github.com/phantomptr/ps5upload
+- 相关项目：https://github.com/Gezine/Y2JB
 - fnOS 开发文档：https://developer.fnnas.com/docs/guide/
+- 本项目致谢与来源说明：`NOTICE.md`

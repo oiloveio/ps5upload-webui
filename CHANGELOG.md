@@ -20,6 +20,7 @@
 - 包级命名、启动默认值、向导和防火墙资源统一为 `ps5upload-webui`；`ps5upload-engine` 仅作为内部二进制和上游 API 组件保留。
 - 更新需求和打包文档，明确当前已经是 `ps5upload-webui + companion + engine` 架构，不再按“仅评估 engine 内置 WebUI”的旧阶段描述。
 - 清理 Python 字节码缓存并加入忽略规则，避免 `__pycache__` 进入 `app.tgz`。
+- 补齐完整 GPLv3 许可证、`NOTICE.md` 致谢说明，并把 fpk `distributor_url` 改为 `oiloveio/ps5upload-webui`。
 
 ## 3.3.22-5 - 2026-06-23
 
